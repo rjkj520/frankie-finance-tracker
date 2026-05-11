@@ -1,0 +1,18 @@
+{
+  "name": "Frankie's Finance Tracker",
+  "short_name": "Frankie",
+  "start_url": "/frankie-finance-tracker/",
+  "scope": "/frankie-finance-tracker/",
+  "display": "standalone",
+  "background_color": "#f7f3eb",
+  "theme_color": "#0f172a",
+  "description": "Private paycheck and bill tracker for Frankie.",
+  "icons": [
+    {
+      "src": "/frankie-finance-tracker/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
