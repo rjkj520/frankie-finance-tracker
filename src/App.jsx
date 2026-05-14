@@ -80,9 +80,7 @@ function createDefaultState() {
     paycheckSettings: {
       [PAYCHECK_ID]: { baseIncome: 0, extraIncome: 0, extraDebtActual: 0 },
     },
-    accounts: [
-      { id: ACCOUNT_ID, name: ACCOUNT_NAME, type: 'Checking', openingBalance: 0 },
-    ],
+    accounts: [{ id: ACCOUNT_ID, name: ACCOUNT_NAME, type: 'Checking', openingBalance: 0 }],
     history: [],
   };
 }
@@ -95,9 +93,7 @@ function normalizeState(raw) {
     debts: Array.isArray(raw?.debts) ? raw.debts.map((d) => ({ ...d, status: d.status ?? 'Pending' })) : fallback.debts,
     expenses: Array.isArray(raw?.expenses) ? raw.expenses.map((e) => ({ ...e, day: e.day ?? 1 })) : fallback.expenses,
     paycheckSettings: raw?.paycheckSettings
-      ? {
-          [PAYCHECK_ID]: { ...fallback.paycheckSettings[PAYCHECK_ID], ...raw.paycheckSettings[PAYCHECK_ID] },
-        }
+      ? { [PAYCHECK_ID]: { ...fallback.paycheckSettings[PAYCHECK_ID], ...raw.paycheckSettings[PAYCHECK_ID] } }
       : fallback.paycheckSettings,
     accounts: Array.isArray(raw?.accounts) && raw.accounts.length ? raw.accounts : fallback.accounts,
     history: Array.isArray(raw?.history) ? raw.history : [],
@@ -142,11 +138,7 @@ function filterBills(items, filter) {
 
 function AppButton({ children, variant = 'solid', size = 'md', className = '', type = 'button', ...props }) {
   const base = 'inline-flex items-center justify-center rounded-xl font-medium transition disabled:cursor-not-allowed disabled:opacity-50';
-  const sizes = {
-    icon: 'h-9 w-9',
-    sm: 'px-3 py-2 text-sm',
-    md: 'px-4 py-2 text-sm',
-  };
+  const sizes = { icon: 'h-9 w-9', sm: 'px-3 py-2 text-sm', md: 'px-4 py-2 text-sm' };
   const variants = {
     solid: 'bg-slate-900 text-white hover:bg-slate-800',
     outline: 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
@@ -216,8 +208,7 @@ function QuickPaidButton({ status, onToggle }) {
   if (status === 'Paid') return null;
   return (
     <AppButton size="sm" className="rounded-xl" onClick={onToggle}>
-      <Check className="mr-1 h-3.5 w-3.5" />
-      Mark Paid
+      <Check className="mr-1 h-3.5 w-3.5" /> Mark Paid
     </AppButton>
   );
 }
@@ -469,12 +460,481 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-      
-      return ledgerEntries.map((entry) => {
-                        runningBalance += entry.kind === 'deposit' ? entry.amount : -entry.amount;
-                        return <div key={entry.id} className="rounded-xl bg-white p-3"><div className="flex items-start justify-between gap-3"><div><div className="font-medium">{entry.label}</div><div className="text-xs text-slate-500">Day {entry.day} • {entry.subtitle}</div>{entry.status ? <div className="mt-1 text-[11px] text-slate-500">{entry.status}</div> : null}</div><div className="text-right"><div className={`font-semibold ${entry.kind === 'deposit' ? 'text-emerald-700' : 'text-slate-900'}`}>{entry.kind === 'deposit' ? '+' : '-'}{currency(entry.amount)}</div><div className="mt-1 text-xs text-slate-500">Running: {currency(runningBalance)}</div></div></div></div>;
-                      });
-                    })()}
+    let cancelled = false;
+
+    const checkPersistentStorage = async () => {
+      if (typeof navigator === 'undefined' || !navigator.storage?.persisted) {
+        if (!cancelled) setStoragePersistence('unsupported');
+        return;
+      }
+
+      try {
+        const persisted = await navigator.storage.persisted();
+        if (!cancelled) setStoragePersistence(persisted ? 'granted' : 'not-granted');
+      } catch {
+        if (!cancelled) setStoragePersistence('unsupported');
+      }
+    };
+
+    checkPersistentStorage();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkServiceWorkerStatus = async () => {
+      if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+      if (!('serviceWorker' in navigator)) {
+        if (!cancelled) setServiceWorkerStatus('unsupported');
+        return;
+      }
+
+      const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (!isSecure) {
+        if (!cancelled) setServiceWorkerStatus('needs-https');
+        return;
+      }
+
+      try {
+        const existingRegistration = await navigator.serviceWorker.getRegistration();
+        if (!cancelled) setServiceWorkerStatus(existingRegistration ? 'registered' : 'ready-for-host');
+      } catch {
+        if (!cancelled) setServiceWorkerStatus('ready-for-host');
+      }
+    };
+
+    checkServiceWorkerStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', activeTab);
+    url.searchParams.set('month', String(currentMonth.getMonth() + 1));
+    url.searchParams.set('year', String(currentMonth.getFullYear()));
+    window.history.replaceState({}, '', url.toString());
+  }, [activeTab, currentMonth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        currentMonth: currentMonth.toISOString(),
+        bills,
+        debts,
+        expenses,
+        paycheckSettings,
+        accounts,
+        history,
+      })
+    );
+  }, [currentMonth, bills, debts, expenses, paycheckSettings, accounts, history]);
+
+  const requestPersistentStorage = async () => {
+    if (typeof navigator === 'undefined' || !navigator.storage?.persist) {
+      setStoragePersistence('unsupported');
+      window.alert('Persistent storage is not supported on this browser.');
+      return;
+    }
+
+    try {
+      const granted = await navigator.storage.persist();
+      setStoragePersistence(granted ? 'granted' : 'not-granted');
+      window.alert(granted ? 'Persistent storage was enabled if supported on this device.' : 'Persistent storage was not granted on this browser.');
+    } catch {
+      setStoragePersistence('unsupported');
+      window.alert('Persistent storage could not be requested on this browser.');
+    }
+  };
+
+  const storageStatusLabel = storagePersistence === 'granted' ? 'Persistent' : storagePersistence === 'not-granted' ? 'Standard' : storagePersistence === 'unsupported' ? 'Unsupported' : 'Checking…';
+  const serviceWorkerStatusLabel = serviceWorkerStatus === 'registered' ? 'Offline Cache Active' : serviceWorkerStatus === 'ready-for-host' ? 'Ready When Hosted' : serviceWorkerStatus === 'needs-https' ? 'Needs HTTPS' : serviceWorkerStatus === 'unsupported' ? 'Unsupported' : 'Checking…';
+
+  const payDate = useMemo(() => new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1), [currentMonth]);
+  const income = paycheckSettings[PAYCHECK_ID].baseIncome + paycheckSettings[PAYCHECK_ID].extraIncome;
+
+  const assignedBills = useMemo(() => bills.map((bill) => {
+    const flags = getBillFlags(bill, currentMonth);
+    return { ...bill, ...flags };
+  }).sort((a, b) => a.dueDay - b.dueDay), [bills, currentMonth]);
+
+  const visibleDebts = useMemo(() => debts.map((debt) => ({ ...debt })).sort((a, b) => a.dueDay - b.dueDay), [debts]);
+
+  const billsTotal = useMemo(() => assignedBills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0), [assignedBills]);
+  const debtTotal = useMemo(() => visibleDebts.reduce((sum, debt) => sum + Number(debt.balance || 0), 0), [visibleDebts]);
+  const expenseTotal = useMemo(() => expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0), [expenses]);
+  const debtMinTotal = useMemo(() => visibleDebts.reduce((sum, debt) => sum + Number(debt.minPayment || 0), 0), [visibleDebts]);
+  const actualExtraDebtAmount = Number((paycheckSettings[PAYCHECK_ID].extraDebtActual || 0).toFixed(2));
+  const totalObligations = billsTotal + expenseTotal + debtMinTotal + actualExtraDebtAmount;
+  const remaining1 = income - totalObligations;
+  const living = remaining1 > 0 ? Number((remaining1 * 0.25).toFixed(2)) : 0;
+  const remaining2 = remaining1 - living;
+  const savings = remaining2 > 0 ? Number((remaining2 * 0.15).toFixed(2)) : 0;
+  const suggestedExtraDebtAmount = remaining2 - savings > 0 ? Number((remaining2 - savings).toFixed(2)) : 0;
+  const targetDebt = [...visibleDebts].filter((debt) => debt.balance > 0).sort((a, b) => b.interestRate - a.interestRate || b.balance - a.balance)[0];
+
+  const accountSummary = useMemo(() => {
+    const account = accounts[0] || { id: ACCOUNT_ID, name: ACCOUNT_NAME, type: 'Checking', openingBalance: 0 };
+    const deposits = income;
+    const billTotal = billsTotal;
+    const debtTotalDue = debtMinTotal;
+    const expenseTotalDue = expenseTotal;
+    const extraDebtTotal = actualExtraDebtAmount;
+    const projectedBalance = Number(account.openingBalance || 0) + deposits - billTotal - debtTotalDue - expenseTotalDue - extraDebtTotal;
+    return { ...account, deposits, billTotal, debtTotal: debtTotalDue, expenseTotal: expenseTotalDue, extraDebtTotal, projectedBalance };
+  }, [accounts, income, billsTotal, debtMinTotal, expenseTotal, actualExtraDebtAmount]);
+
+  const ledgerEntries = useMemo(() => {
+    const entries = [];
+    entries.push({ id: 'paycheck', day: 1, label: PAYCHECK_LABEL, subtitle: 'Monthly income', amount: income, kind: 'deposit' });
+    assignedBills.forEach((bill) => entries.push({ id: `bill-${bill.id}`, day: bill.dueDay, label: bill.name, subtitle: 'Bill', amount: bill.amount, kind: 'withdrawal', status: bill.status }));
+    visibleDebts.forEach((debt) => entries.push({ id: `debt-${debt.id}`, day: debt.dueDay, label: debt.name, subtitle: 'Debt payment', amount: debt.minPayment, kind: 'withdrawal', status: debt.status }));
+    expenses.forEach((expense) => entries.push({ id: `expense-${expense.id}`, day: expense.day, label: expense.name, subtitle: 'Expense', amount: expense.amount, kind: 'withdrawal', status: 'Planned' }));
+    if (actualExtraDebtAmount > 0) {
+      entries.push({ id: 'extra-debt', day: 1, label: targetDebt?.name || 'Extra Debt', subtitle: 'Extra debt payment', amount: actualExtraDebtAmount, kind: 'withdrawal', status: 'Planned' });
+    }
+    return entries.sort((a, b) => a.day - b.day || (a.kind === 'deposit' ? -1 : 1));
+  }, [income, assignedBills, visibleDebts, expenses, actualExtraDebtAmount, targetDebt]);
+
+  const exportBackup = () => {
+    const payload = { currentMonth: currentMonth.toISOString(), bills, debts, expenses, paycheckSettings, accounts, history };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `frankie-finance-tracker-backup-${currentMonth.getFullYear()}-${currentMonth.getMonth() + 1}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBackup = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = normalizeState(JSON.parse(text));
+      setCurrentMonth(new Date(parsed.currentMonth));
+      setBills(parsed.bills);
+      setDebts(parsed.debts);
+      setExpenses(parsed.expenses);
+      setPaycheckSettings(parsed.paycheckSettings);
+      setAccounts(parsed.accounts);
+      setHistory(parsed.history);
+    } catch {
+      window.alert('That backup file could not be read.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const previousMonth = () => {
+    if (!history.length) return;
+    const last = history[history.length - 1];
+    setCurrentMonth(new Date(last.currentMonth));
+    setBills(last.bills);
+    setDebts(last.debts);
+    setExpenses(last.expenses);
+    setPaycheckSettings(last.paycheckSettings);
+    setAccounts(last.accounts);
+    setHistory((prev) => prev.slice(0, -1));
+  };
+
+  const nextMonth = () => {
+    const snapshot = JSON.parse(JSON.stringify({ currentMonth: currentMonth.toISOString(), bills, debts, expenses, paycheckSettings, accounts }));
+    const nextOpeningBalance = accountSummary.projectedBalance;
+
+    setHistory((prev) => [...prev, snapshot]);
+    setCurrentMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    setBills((prev) => prev.map((bill) => ({ ...bill, status: 'Pending' })));
+    setDebts((prev) => prev.map((debt) => ({
+      ...debt,
+      balance: Math.max(0, debt.balance - (debt.status === 'Paid' ? debt.minPayment : 0) - (targetDebt?.id === debt.id ? actualExtraDebtAmount : 0)),
+      status: 'Pending',
+    })));
+    setPaycheckSettings((prev) => ({
+      [PAYCHECK_ID]: { ...prev[PAYCHECK_ID], extraIncome: 0, extraDebtActual: 0 },
+    }));
+    setAccounts((prev) => prev.map((account, index) => index === 0 ? { ...account, openingBalance: nextOpeningBalance } : account));
+  };
+
+  const toggleBillPaid = (id) => setBills((prev) => prev.map((bill) => (bill.id === id ? { ...bill, status: bill.status === 'Paid' ? 'Pending' : 'Paid' } : bill)));
+  const toggleDebtPaid = (id) => setDebts((prev) => prev.map((debt) => (debt.id === id ? { ...debt, status: debt.status === 'Paid' ? 'Pending' : 'Paid' } : debt)));
+
+  const renderedLedgerEntries = (() => {
+    let runningBalance = Number(accountSummary.openingBalance || 0);
+    return ledgerEntries.map((entry) => {
+      runningBalance += entry.kind === 'deposit' ? Number(entry.amount || 0) : -Number(entry.amount || 0);
+      return (
+        <div key={entry.id} className="rounded-xl bg-white p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-medium">{entry.label}</div>
+              <div className="text-xs text-slate-500">Day {entry.day} • {entry.subtitle}</div>
+              {entry.status ? <div className="mt-1 text-[11px] text-slate-500">{entry.status}</div> : null}
+            </div>
+            <div className="text-right">
+              <div className={`font-semibold ${entry.kind === 'deposit' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                {entry.kind === 'deposit' ? '+' : '-'}{currency(entry.amount)}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">Running: {currency(runningBalance)}</div>
+            </div>
+          </div>
+        </div>
+      );
+    });
+  })();
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: '#f7f3eb' }}>
+      <div className="mx-auto max-w-md px-4 pb-24 pt-4">
+        <div className="mb-3 rounded-2xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">Your data saves automatically on this device.</div>
+
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm text-slate-500">Frankie's Finance Tracker</div>
+            <div className="text-2xl font-bold tracking-tight">{currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <AppButton variant="outline" onClick={previousMonth} disabled={!history.length}><ChevronLeft className="mr-1 h-4 w-4" /> Prev</AppButton>
+            <AppButton onClick={nextMonth}>Next Month <ChevronRight className="ml-1 h-4 w-4" /></AppButton>
+          </div>
+        </div>
+
+        <div className="grid h-auto w-full grid-cols-5 gap-1 rounded-2xl border border-slate-300 bg-white p-1 shadow-sm">
+          {[
+            ['bills', 'Bills'],
+            ['debt', 'Debt'],
+            ['expenses', 'Expenses'],
+            ['dashboard', 'Paychecks'],
+            ['accounts', 'Accounts'],
+          ].map(([value, label]) => (
+            <button key={value} type="button" onClick={() => setActiveTab(value)} className={`min-w-0 whitespace-normal rounded-xl border border-slate-300 px-1 py-2 text-center text-[11px] font-semibold leading-tight ${activeTab === value ? 'bg-slate-900 text-white' : 'bg-white text-slate-600'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === 'bills' ? (
+          <div className="space-y-4 pt-4">
+            <AppCard style={{ backgroundColor: tabThemes.bills.tint }}><AppCardContent><div className="text-sm font-semibold" style={{ color: tabThemes.bills.accent }}>Bills Overview</div><div className="mt-1 text-sm text-slate-600">Keep track of recurring bills, what is due soon, and what is already paid.</div></AppCardContent></AppCard>
+            <TopListBar title="Monthly Bills Total" value={currency(billsTotal)} onAdd={() => setBillDialog({ open: true, item: null })} addLabel="Add Bill" />
+            <FilterBar value={billsFilter} onChange={setBillsFilter} />
+            <div className="space-y-3">
+              {filterBills(assignedBills, billsFilter).length ? filterBills(assignedBills, billsFilter).map((bill) => (
+                <AppCard key={bill.id} style={{ borderLeft: `6px solid ${paycheckColor.border}` }}>
+                  <AppCardContent>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{bill.name}</div>
+                        <div className="mt-2"><PaycheckPill /></div>
+                        <div className="mt-2 text-sm text-slate-500">Due {bill.dueDay}</div>
+                        <div className="mt-2 flex items-center gap-2">
+                          {bill.status === 'Paid' ? (
+                            <button type="button" onClick={() => toggleBillPaid(bill.id)} className="inline-flex items-center rounded-full border border-green-700 bg-green-700 px-2.5 py-1 text-xs font-medium text-white">Paid</button>
+                          ) : (
+                            <>
+                              <AppBadge className={bill.isOverdue ? 'border-red-800 bg-red-700 text-white' : bill.isDueSoon ? 'border-red-200 bg-red-100 text-red-800' : 'border-slate-200 bg-slate-100 text-slate-800'}>{bill.isOverdue ? 'Overdue' : bill.isDueSoon ? 'Due Soon' : 'Pending'}</AppBadge>
+                              <QuickPaidButton status={bill.status} onToggle={() => toggleBillPaid(bill.id)} />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold">{currency(bill.amount)}</div>
+                        <div className="mt-3 flex gap-2">
+                          <AppButton size="icon" variant="outline" onClick={() => setBillDialog({ open: true, item: bill })}><Pencil className="h-4 w-4" /></AppButton>
+                          <AppButton size="icon" variant="outline" onClick={() => setBills((prev) => prev.filter((row) => row.id !== bill.id))}><Trash2 className="h-4 w-4" /></AppButton>
+                        </div>
+                      </div>
+                    </div>
+                  </AppCardContent>
+                </AppCard>
+              )) : <AppCard><AppCardContent className="text-sm text-slate-500">No matching bills for this filter.</AppCardContent></AppCard>}
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'debt' ? (
+          <div className="space-y-4 pt-4">
+            <AppCard style={{ backgroundColor: tabThemes.debt.tint }}><AppCardContent><div className="text-sm font-semibold" style={{ color: tabThemes.debt.accent }}>Debt Overview</div><div className="mt-1 text-sm text-slate-600">Watch balances, payments, and extra debt applied without making the screen feel heavy.</div></AppCardContent></AppCard>
+            <TopListBar title="Total Debt Remaining" value={currency(debtTotal)} onAdd={() => setDebtDialog({ open: true, item: null })} addLabel="Add Debt" />
+            <div className="space-y-3">
+              {visibleDebts.map((debt) => (
+                <AppCard key={debt.id} style={{ borderLeft: `6px solid ${paycheckColor.border}` }}>
+                  <AppCardContent>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{debt.name}</div>
+                        <div className="mt-2"><PaycheckPill /></div>
+                        <div className="mt-2 text-sm text-slate-500">Due {debt.dueDay}</div>
+                        <div className="mt-1 text-sm text-slate-500">Min {currency(debt.minPayment)} • {debt.interestRate}%</div>
+                        <div className="mt-2 flex items-center gap-2 text-sm"><AlertCircle className="h-4 w-4 text-slate-400" /><span>Balance: {currency(debt.balance)}</span></div>
+                        <div className="mt-2 flex items-center gap-2">
+                          {debt.status === 'Paid' ? (
+                            <button type="button" onClick={() => toggleDebtPaid(debt.id)} className="inline-flex items-center rounded-full border border-green-700 bg-green-700 px-2.5 py-1 text-xs font-medium text-white">Paid</button>
+                          ) : (
+                            <>
+                              <AppBadge className="border-slate-200 bg-slate-100 text-slate-800">Pending</AppBadge>
+                              <QuickPaidButton status={debt.status} onToggle={() => toggleDebtPaid(debt.id)} />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <AppButton size="icon" variant="outline" onClick={() => setDebtDialog({ open: true, item: debt })}><Pencil className="h-4 w-4" /></AppButton>
+                        <AppButton size="icon" variant="outline" onClick={() => setDebts((prev) => prev.filter((row) => row.id !== debt.id))}><Trash2 className="h-4 w-4" /></AppButton>
+                      </div>
+                    </div>
+                  </AppCardContent>
+                </AppCard>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'expenses' ? (
+          <div className="space-y-4 pt-4">
+            <AppCard style={{ backgroundColor: tabThemes.expenses.tint }}><AppCardContent><div className="text-sm font-semibold" style={{ color: tabThemes.expenses.accent }}>Expenses Overview</div><div className="mt-1 text-sm text-slate-600">Track changing expenses that show up during the month.</div></AppCardContent></AppCard>
+            <TopListBar title="Monthly Expenses Total" value={currency(expenseTotal)} onAdd={() => setExpenseDialog({ open: true, item: null })} addLabel="Add Expense" />
+            <div className="space-y-3">
+              {expenses.map((expense) => (
+                <AppCard key={expense.id} style={{ borderLeft: `6px solid ${paycheckColor.border}` }}>
+                  <AppCardContent>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{expense.name}</div>
+                        <div className="mt-2 text-sm text-slate-500">Day {expense.day}</div>
+                        <div className="mt-2 text-sm text-slate-500"><PaycheckPill /></div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold">{currency(expense.amount)}</div>
+                        <div className="mt-3 flex gap-2">
+                          <AppButton size="icon" variant="outline" onClick={() => setExpenseDialog({ open: true, item: expense })}><Pencil className="h-4 w-4" /></AppButton>
+                          <AppButton size="icon" variant="outline" onClick={() => setExpenses((prev) => prev.filter((row) => row.id !== expense.id))}><Trash2 className="h-4 w-4" /></AppButton>
+                        </div>
+                      </div>
+                    </div>
+                  </AppCardContent>
+                </AppCard>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {activeTab === 'dashboard' ? (
+          <div className="space-y-4 pt-4">
+            <AppCard style={{ backgroundColor: tabThemes.dashboard.tint }}><AppCardContent><div className="text-sm font-semibold" style={{ color: tabThemes.dashboard.accent }}>Paychecks Overview</div><div className="mt-1 text-sm text-slate-600">Frankie receives SSI Income on the 1st of every month.</div></AppCardContent></AppCard>
+            <AppCard>
+              <AppCardHeader><div className="text-base font-semibold">Frankie’s Phone Setup</div></AppCardHeader>
+              <AppCardContent className="space-y-3 text-sm text-slate-600">
+                <div>This version is set up to be simple and app-like, without notifications.</div>
+                <div className="rounded-2xl bg-slate-50 p-3">
+                  <div className="font-medium text-slate-700">How Frankie should install it</div>
+                  <div className="mt-2 space-y-1 text-xs text-slate-500">
+                    <div>1. Open the hosted link in Safari on iPhone.</div>
+                    <div>2. Tap Share.</div>
+                    <div>3. Tap Add to Home Screen.</div>
+                    <div>4. Open it from the new phone icon like an app.</div>
+                  </div>
+                </div>
+              </AppCardContent>
+            </AppCard>
+            <div className="grid grid-cols-2 gap-3">
+              <SummaryCard title="Monthly Income" value={currency(income)} icon={<DollarSign className="h-4 w-4" />} theme="dashboard" />
+              <SummaryCard title="Obligations" value={currency(totalObligations)} icon={<Receipt className="h-4 w-4" />} theme="dashboard" />
+              <SummaryCard title="Left After Bills" value={currency(income - totalObligations)} icon={<PiggyBank className="h-4 w-4" />} theme="dashboard" />
+              <SummaryCard title="Debt Still Due" value={currency(debtTotal)} icon={<CreditCard className="h-4 w-4" />} theme="dashboard" />
+            </div>
+            <AppCard style={{ borderLeft: `6px solid ${paycheckColor.border}` }}>
+              <AppCardHeader>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="mb-2"><PaycheckPill /></div>
+                    <div className="text-lg font-semibold">{PAYCHECK_LABEL}</div>
+                    <div className="mt-1 flex items-center gap-2 text-sm text-slate-500"><CalendarDays className="h-4 w-4" /> {fmtShortDate(payDate)}</div>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <AppBadge className="border-slate-900 bg-slate-900 text-white">{currency(income)}</AppBadge>
+                    <AppButton size="sm" variant="outline" onClick={() => setPaycheckDialog(true)}><Pencil className="mr-1 h-3.5 w-3.5" /> Edit</AppButton>
+                  </div>
+                </div>
+              </AppCardHeader>
+              <AppCardContent>
+                <div className="space-y-3 text-sm">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Stat label="Bills" value={currency(billsTotal + expenseTotal)} />
+                    <Stat label="Debt" value={currency(debtMinTotal + actualExtraDebtAmount)} />
+                    <Stat label="Living" value={currency(living)} />
+                    <Stat label="Savings" value={currency(savings)} />
+                    <Stat label="Extra Income" value={currency(paycheckSettings[PAYCHECK_ID].extraIncome)} />
+                    <Stat label="Extra Debt Entered" value={currency(actualExtraDebtAmount)} />
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-3"><div className="text-slate-500">Suggested Extra Debt</div><div className="font-semibold">{currency(suggestedExtraDebtAmount)}</div><div className="mt-1 text-xs text-slate-500">Target: {targetDebt?.name || 'None'}</div></div>
+                </div>
+              </AppCardContent>
+            </AppCard>
+          </div>
+        ) : null}
+
+        {activeTab === 'accounts' ? (
+          <div className="space-y-4 pt-4">
+            <AppCard style={{ backgroundColor: tabThemes.accounts.tint }}><AppCardContent><div className="text-sm font-semibold" style={{ color: tabThemes.accounts.accent }}>Accounts Overview</div><div className="mt-1 text-sm text-slate-600">See balances, projected activity, and your running ledger in one cleaner view.</div></AppCardContent></AppCard>
+            <TopListBar title="Projected Balance" value={currency(accountSummary.projectedBalance)} onAdd={() => setAccountDialog({ open: true, item: accounts[0] || null })} addLabel="Edit Account" />
+            <AppCard>
+              <AppCardHeader><div className="text-base font-semibold">Backup & Restore</div></AppCardHeader>
+              <AppCardContent className="space-y-3">
+                <div className="text-sm text-slate-500">Download a backup file of your current data or restore from one you saved earlier.</div>
+                <div className="flex gap-2">
+                  <AppButton onClick={exportBackup}><Download className="mr-1 h-4 w-4" /> Export</AppButton>
+                  <AppButton variant="outline" onClick={() => importInputRef.current?.click()}><Upload className="mr-1 h-4 w-4" /> Import</AppButton>
+                </div>
+                <input ref={importInputRef} type="file" accept="application/json" className="hidden" onChange={importBackup} />
+              </AppCardContent>
+            </AppCard>
+            <AppCard>
+              <AppCardHeader><div className="text-base font-semibold">Offline & Device Setup</div></AppCardHeader>
+              <AppCardContent className="space-y-3 text-sm text-slate-600">
+                <div className="grid grid-cols-2 gap-3">
+                  <Stat label="Connection" value={isOnline ? 'Online' : 'Offline'} />
+                  <Stat label="Home Screen" value={isStandalone ? 'Added' : 'Browser Only'} />
+                  <Stat label="Storage" value={storageStatusLabel} />
+                  <Stat label="Offline Cache" value={serviceWorkerStatusLabel} />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <AppButton variant="outline" onClick={requestPersistentStorage}>Request Persistent Storage</AppButton>
+                </div>
+              </AppCardContent>
+            </AppCard>
+            <AppCard>
+              <AppCardContent>
+                <div className="flex items-start justify-between gap-3">
+                  <div><div className="font-semibold">{accountSummary.name}</div><div className="mt-1 text-sm text-slate-500">{accountSummary.type}</div></div>
+                  <div className="flex gap-2">
+                    <AppButton size="icon" variant="outline" onClick={() => setAccountDialog({ open: true, item: accounts[0] || null })}><Pencil className="h-4 w-4" /></AppButton>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <Stat label="Account Balance" value={currency(accountSummary.openingBalance)} />
+                  <Stat label="Deposits" value={currency(accountSummary.deposits)} />
+                  <Stat label="Bills" value={currency(accountSummary.billTotal)} />
+                  <Stat label="Debt" value={currency(accountSummary.debtTotal)} />
+                  <Stat label="Expenses" value={currency(accountSummary.expenseTotal)} />
+                  <Stat label="Extra Debt" value={currency(accountSummary.extraDebtTotal)} />
+                  <div className="col-span-2"><Stat label="Projected" value={currency(accountSummary.projectedBalance)} /></div>
+                </div>
+                <div className="mt-3 rounded-2xl bg-slate-50 p-3"><div className="mb-2 text-sm text-slate-500">Linked Paycheck</div><div className="flex flex-wrap gap-2"><PaycheckPill /></div></div>
+                <div className="mt-3 rounded-2xl bg-slate-50 p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm text-slate-600"><Wallet className="h-4 w-4" /> Projected Ledger</div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center justify-between rounded-xl bg-white p-3"><div><div className="font-medium">Starting Balance</div><div className="text-xs text-slate-500">Day 1</div></div><div className="font-semibold">{currency(accountSummary.openingBalance)}</div></div>
+                    {renderedLedgerEntries}
                   </div>
                 </div>
               </AppCardContent>
